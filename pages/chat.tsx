@@ -24,6 +24,7 @@ export default function ChatPage() {
   const peerRef = useRef<any>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const currentRoomRef = useRef<string | null>(null)
+  const signalBufferRef = useRef<any[]>([])
 
   // ─── State ────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<ChatStatus>('initializing')
@@ -46,6 +47,7 @@ export default function ChatPage() {
       peerRef.current = null
     }
     setRemoteStream(null)
+    signalBufferRef.current = []
   }, [])
 
   // ─── Leave current room (for Next button or cleanup) ──────────────────────
@@ -70,12 +72,18 @@ export default function ChatPage() {
       stream: localStreamRef.current || undefined,
       config: {
         iceServers: [
-          // Google STUN servers — free, reliable for most users
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
-          // Open STUN as additional fallback
-          { urls: 'stun:openrelay.metered.ca:80' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          { urls: 'stun:stun.ekiga.net' },
+          { urls: 'stun:stun.ideasip.com' },
+          { urls: 'stun:stun.schlund.de' },
+          { urls: 'stun:stun.voiparound.com' },
+          { urls: 'stun:stun.voipbuster.com' },
+          { urls: 'stun:stun.voipstunt.com' },
+          { urls: 'stun:stun.voxgratia.org' },
         ],
       },
     })
@@ -96,7 +104,12 @@ export default function ChatPage() {
       setRemoteStream(null)
     })
 
+    // Process buffered signals
     peerRef.current = peer
+    if (signalBufferRef.current.length > 0) {
+      signalBufferRef.current.forEach(sig => peer.signal(sig))
+      signalBufferRef.current = []
+    }
   }, [destroyPeer])
 
   // ─── Join the matchmaking queue ───────────────────────────────────────────
@@ -124,7 +137,11 @@ export default function ChatPage() {
     })
 
     socket.on('signal', ({ signal }: { signal: any }) => {
-      peerRef.current?.signal(signal)
+      if (peerRef.current) {
+        peerRef.current.signal(signal)
+      } else {
+        signalBufferRef.current.push(signal)
+      }
     })
 
     socket.on('chat-message', ({ text }: { text: string }) => {
