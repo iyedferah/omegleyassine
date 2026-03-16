@@ -26,6 +26,9 @@ const queues = {
 // Allows O(1) lookup: does anyone with interest 'gaming' want 'video' chat?
 const interestMap = new Map()
 
+// roomId → { members: Set<socketId> }
+const rooms = new Map()
+
 // socketId -> roomId (for O(1) reverse lookup)
 const socketRoom = new Map()
 
@@ -240,7 +243,6 @@ app.prepare().then(() => {
     socket.on('disconnect', (reason) => {
       leaveRoom(io, socket)
       removeFromQueue(socket.id)
-      socketMode.delete(socket.id)
       if (dev) console.log(`[-] ${socket.id} disconnected (${reason}) | total: ${io.engine.clientsCount}`)
     })
   })
