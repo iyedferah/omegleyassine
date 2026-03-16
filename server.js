@@ -16,65 +16,88 @@ const app = next({ dev, hostname, port })
 const handle = app.getRequestHandler()
 
 // ─── Matchmaking State ────────────────────────────────────────────────────────
-// Separate queues per mode — each entry: { id: socketId, interests: string[] }
-// FIFO: O(1) amortized matching (push to end, shift from front when matched)
+// Separate queues per mode (FIFO)
 const queues = {
   video: [],
   text: [],
 }
 
-// roomId → { members: Set<socketId> }
-const rooms = new Map()
+// interest -> { mode -> Set<socketId> }
+// Allows O(1) lookup: does anyone with interest 'gaming' want 'video' chat?
+const interestMap = new Map()
 
-// socketId → roomId  (for O(1) reverse lookup on disconnect)
+// socketId -> roomId (for O(1) reverse lookup)
 const socketRoom = new Map()
-
-// socketId → mode
-const socketMode = new Map()
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function addToInterestMap(socketId, mode, interests) {
+  interests.forEach(tag => {
+    if (!interestMap.has(tag)) interestMap.set(tag, { video: new Set(), text: new Set() })
+    interestMap.get(tag)[mode].add(socketId)
+  })
+}
+
+function removeFromInterestMap(socketId, mode, interests) {
+  interests.forEach(tag => {
+    const entry = interestMap.get(tag)
+    if (entry) {
+      entry[mode].delete(socketId)
+      if (entry.video.size === 0 && entry.text.size === 0) interestMap.delete(tag)
+    }
+  })
+}
+
 /**
  * Find the best match in a queue for a given socket.
- * Priority: interest overlap → any available user.
- * Falls back to FIFO if no interest overlap is found.
+ * Priority: Interest overlap (O(1) via Map) -> Generic FIFO (O(1) via shift)
  */
-function findMatch(queue, socketId, interests) {
+function findMatch(mode, socketId, interests) {
+  const queue = queues[mode]
   if (queue.length === 0) return null
 
   // 1. Try to find someone with overlapping interests
   if (interests.length > 0) {
-    for (let i = 0; i < queue.length; i++) {
-      const candidate = queue[i]
-      if (candidate.id === socketId) continue
-      const hasOverlap = interests.some(tag =>
-        candidate.interests.includes(tag)
-      )
-      if (hasOverlap) {
-        queue.splice(i, 1)
-        return candidate
+    for (const tag of interests) {
+      const candidates = interestMap.get(tag)?.[mode]
+      if (candidates && candidates.size > 0) {
+        // Pick the first available candidate (excluding self)
+        for (const candidateId of candidates) {
+          if (candidateId === socketId) continue
+          
+          // Found a match! Remove them from the global queue
+          const idx = queue.findIndex(u => u.id === candidateId)
+          if (idx !== -1) {
+            const match = queue.splice(idx, 1)[0]
+            removeFromInterestMap(match.id, mode, match.interests)
+            return match
+          }
+        }
       }
     }
   }
 
-  // 2. Fallback: take the first person in queue (FIFO)
-  for (let i = 0; i < queue.length; i++) {
-    if (queue[i].id !== socketId) {
-      return queue.splice(i, 1)[0]
+  // 2. Fallback: Take the first person in queue who isn't us
+  if (queue[0]?.id === socketId) {
+    if (queue.length > 1) {
+      const match = queue.splice(1, 1)[0]
+      removeFromInterestMap(match.id, mode, match.interests)
+      return match
     }
+    return null
   }
 
-  return null
+  const match = queue.shift()
+  removeFromInterestMap(match.id, mode, match.interests)
+  return match
 }
 
-/**
- * Remove a socket from whichever queue it's in.
- */
 function removeFromQueue(socketId) {
-  for (const queue of Object.values(queues)) {
-    const idx = queue.findIndex(u => u.id === socketId)
+  for (const mode of ['video', 'text']) {
+    const idx = queues[mode].findIndex(u => u.id === socketId)
     if (idx !== -1) {
-      queue.splice(idx, 1)
+      const user = queues[mode].splice(idx, 1)[0]
+      removeFromInterestMap(user.id, mode, user.interests)
       return
     }
   }
@@ -131,28 +154,23 @@ app.prepare().then(() => {
 
     // ── Join Queue ────────────────────────────────────────────────────────────
     socket.on('join-queue', ({ mode = 'video', interests = [] } = {}) => {
-      // Validate mode
       const queueKey = mode === 'text' ? 'text' : 'video'
       const queue = queues[queueKey]
 
-      socketMode.set(socket.id, queueKey)
-
-      // Make sure socket isn't already in a room
-      const existingRoom = socketRoom.get(socket.id)
-      if (existingRoom) {
+      // Clean up previous room if any
+      if (socketRoom.get(socket.id)) {
         leaveRoom(io, socket)
       }
 
-      // Normalize interests: lowercase, trim, max 10
+      // Normalize interests
       const normalizedInterests = (Array.isArray(interests) ? interests : [])
         .map(i => String(i).toLowerCase().trim())
         .filter(Boolean)
         .slice(0, 10)
 
-      const match = findMatch(queue, socket.id, normalizedInterests)
+      const match = findMatch(queueKey, socket.id, normalizedInterests)
 
       if (match) {
-        // ── Pair found — create room ─────────────────────────────────────────
         const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2)}`
         rooms.set(roomId, { members: new Set([socket.id, match.id]) })
         socketRoom.set(socket.id, roomId)
@@ -161,16 +179,13 @@ app.prepare().then(() => {
         socket.join(roomId)
         io.sockets.sockets.get(match.id)?.join(roomId)
 
-        // The newly joined user is the initiator (creates the WebRTC offer)
         socket.emit('matched', { roomId, initiator: true })
         io.to(match.id).emit('matched', { roomId, initiator: false })
-
-        if (dev) console.log(`[~] Matched ${socket.id} ↔ ${match.id} in ${roomId}`)
       } else {
-        // ── No match yet — add to queue ──────────────────────────────────────
         // Avoid duplicates in queue
         if (!queue.find(u => u.id === socket.id)) {
           queue.push({ id: socket.id, interests: normalizedInterests })
+          addToInterestMap(socket.id, queueKey, normalizedInterests)
         }
         socket.emit('waiting', { position: queue.length })
         if (dev) console.log(`[~] ${socket.id} waiting in ${queueKey} queue (len: ${queue.length})`)
