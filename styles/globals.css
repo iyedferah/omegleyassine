@@ -1,0 +1,68 @@
+/* Global styles for the Omegle clone */
+/* The compiled Tailwind v4 utilities come from /public/app.css loaded via _document */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#__next {
+  height: 100%;
+  min-height: 100dvh;
+  background-color: #18181b; /* zinc-900 */
+  color: #fff;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Video elements */
+video {
+  display: block;
+  object-fit: cover;
+  background: #09090b;
+}
+
+/* Scrollbar */
+.chat-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 10px;
+}
+
+/* Pulsing waiting animation */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 0.8; }
+  50% { transform: scale(1.2); opacity: 0.4; }
+  100% { transform: scale(0.8); opacity: 0.8; }
+}
+
+.pulse-ring {
+  animation: pulse-ring 1.8s ease-in-out infinite;
+}
+
+/* Fade-in for matched video */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fade-in 0.4s ease;
+}
+
+/* Smooth slide for messages */
+@keyframes slide-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.msg-in {
+  animation: slide-up 0.2s ease;
+}
