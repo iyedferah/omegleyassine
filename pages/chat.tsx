@@ -33,6 +33,7 @@ export default function ChatPage() {
   // ─── State ────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<ChatStatus>('initializing')
   const [messages, setMessages] = useState<Message[]>([])
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isCameraOff, setIsCameraOff] = useState(false)
@@ -180,11 +181,14 @@ export default function ChatPage() {
       if (mode === 'video') {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-          if (!cancelled) localStreamRef.current = stream
+          if (!cancelled) {
+            localStreamRef.current = stream
+            setLocalStream(stream)  // triggers re-render so preview shows immediately
+          }
         } catch (err) {
           console.warn('[media] Could not get user media:', err)
-          // Continue without camera — user can still text chat
           localStreamRef.current = null
+          setLocalStream(null)
         }
       }
 
@@ -221,6 +225,7 @@ export default function ChatPage() {
     socketRef.current?.emit('leave-queue')
     localStreamRef.current?.getTracks().forEach(t => t.stop())
     localStreamRef.current = null
+    setLocalStream(null)
     router.push('/')
   }, [leaveRoom, router])
 
@@ -318,7 +323,7 @@ export default function ChatPage() {
           minHeight: 0,
           // On small screens: stack vertically; on md+: side by side
         }}>
-          {/* Left: Video panel (hidden in text mode) */}
+          {/* Left: Video panel (always renders in video mode so local cam preview shows) */}
           {mode === 'video' && (
             <div style={{
               flex: 1,
@@ -326,15 +331,24 @@ export default function ChatPage() {
               overflow: 'hidden',
               position: 'relative',
             }}>
-              {isWaiting ? (
-                <WaitingScreen onlineCount={onlineCount} mode={mode} />
-              ) : (
-                <VideoPanel
-                  localStream={localStreamRef.current}
-                  remoteStream={remoteStream}
-                  isCameraOff={isCameraOff}
-                  mode={mode}
-                />
+              {/* VideoPanel always rendered so camera preview shows while waiting */}
+              <VideoPanel
+                localStream={localStream}
+                remoteStream={remoteStream}
+                isCameraOff={isCameraOff}
+                mode={mode}
+              />
+              {/* WaitingScreen overlaid on top during search */}
+              {isWaiting && (
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'rgba(9,9,11,0.82)',
+                  backdropFilter: 'blur(4px)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  zIndex: 10,
+                }}>
+                  <WaitingScreen onlineCount={onlineCount} mode={mode} />
+                </div>
               )}
             </div>
           )}
