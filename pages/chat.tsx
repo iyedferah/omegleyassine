@@ -25,6 +25,10 @@ export default function ChatPage() {
   const localStreamRef = useRef<MediaStream | null>(null)
   const currentRoomRef = useRef<string | null>(null)
   const signalBufferRef = useRef<any[]>([])
+  const iceServersRef = useRef<any[]>([
+    // Fallback STUN — used until TURN credentials are fetched
+    { urls: 'stun:stun.l.google.com:19302' },
+  ])
 
   // ─── State ────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<ChatStatus>('initializing')
@@ -71,20 +75,7 @@ export default function ChatPage() {
       trickle: true,
       stream: localStreamRef.current || undefined,
       config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          { urls: 'stun:stun.ekiga.net' },
-          { urls: 'stun:stun.ideasip.com' },
-          { urls: 'stun:stun.schlund.de' },
-          { urls: 'stun:stun.voiparound.com' },
-          { urls: 'stun:stun.voipbuster.com' },
-          { urls: 'stun:stun.voipstunt.com' },
-          { urls: 'stun:stun.voxgratia.org' },
-        ],
+        iceServers: iceServersRef.current,
       },
     })
 
@@ -167,6 +158,17 @@ export default function ChatPage() {
     let cancelled = false
 
     const bootstrap = async () => {
+      // 0. Fetch TURN credentials from Metered (best effort — fall back to STUN if it fails)
+      try {
+        const apiKey = process.env.NEXT_PUBLIC_METERED_API_KEY
+        if (apiKey) {
+          const res = await fetch(`https://omegleyassine.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`)
+          if (res.ok) iceServersRef.current = await res.json()
+        }
+      } catch (e) {
+        console.warn('[turn] Could not fetch TURN credentials, using STUN fallback')
+      }
+
       // 1. Get socket
       const { getSocket } = await import('../lib/socket')
       const socket = getSocket()
