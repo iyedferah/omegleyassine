@@ -158,12 +158,14 @@ export default function ChatPage() {
     let cancelled = false
 
     const bootstrap = async () => {
-      // 0. Fetch TURN credentials from Metered (best effort — fall back to STUN if it fails)
+      // 0. Fetch TURN credentials from our own API route (server-side, secure & reliable)
       try {
-        const apiKey = process.env.NEXT_PUBLIC_METERED_API_KEY
-        if (apiKey) {
-          const res = await fetch(`https://omegleyassine.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`)
-          if (res.ok) iceServersRef.current = await res.json()
+        const res = await fetch('/api/ice-servers')
+        if (res.ok) {
+          const servers = await res.json()
+          if (Array.isArray(servers) && servers.length > 0) {
+            iceServersRef.current = servers
+          }
         }
       } catch (e) {
         console.warn('[turn] Could not fetch TURN credentials, using STUN fallback')
