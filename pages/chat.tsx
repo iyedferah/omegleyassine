@@ -90,11 +90,35 @@ export default function ChatPage() {
 
     peer.on('error', (err: Error) => {
       console.error('[webrtc] Peer error:', err.message)
+      // Don't auto-reconnect on error — partner may have left intentionally
     })
 
     peer.on('close', () => {
       setRemoteStream(null)
     })
+
+    // Monitor the underlying RTCPeerConnection so we can detect network drops
+    // simple-peer exposes it as peer._pc
+    peer.on('connect', () => {
+      console.log('[webrtc] P2P connection established!')
+    })
+
+    // Watch ICE state to detect mid-call drops
+    setTimeout(() => {
+      const pc: RTCPeerConnection | undefined = (peer as any)._pc
+      if (!pc) return
+      pc.oniceconnectionstatechange = () => {
+        console.log('[webrtc] ICE state:', pc.iceConnectionState)
+        if (pc.iceConnectionState === 'disconnected') {
+          // Give it 5s to recover before declaring failure
+          console.warn('[webrtc] ICE disconnected — waiting to see if it recovers...')
+        }
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+          console.error('[webrtc] ICE failed/closed — connection dropped')
+          setRemoteStream(null)
+        }
+      }
+    }, 500) // short delay so _pc is set up by simple-peer
 
     // Process buffered signals
     peerRef.current = peer
@@ -150,7 +174,20 @@ export default function ChatPage() {
     socket.on('stats', ({ online }: { online: number }) => {
       setOnlineCount(online)
     })
-  }, [createPeer, destroyPeer])
+
+    // ── Handle socket reconnect (Railway restart / network blip) ──────────────
+    socket.on('reconnect', () => {
+      console.log('[socket] Reconnected — rejoining queue')
+      // If we were waiting or chatting, go back to waiting after reconnect
+      if (status === 'waiting' || status === 'chatting') {
+        destroyPeer()
+        currentRoomRef.current = null
+        setStatus('waiting')
+        socket.emit('join-queue', { mode, interests })
+      }
+    })
+
+  }, [createPeer, destroyPeer, mode, interests, status])
 
   // ─── Bootstrap on mount ───────────────────────────────────────────────────
   useEffect(() => {

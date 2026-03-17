@@ -137,16 +137,17 @@ app.prepare().then(() => {
   })
 
   const io = new Server(httpServer, {
-    // Allow all origins in dev; restrict in production
     cors: {
       origin: process.env.CORS_ORIGIN || '*',
       methods: ['GET', 'POST'],
     },
-    // Tuning for many concurrent connections
-    pingTimeout: 20000,
+    // Keep connections alive — Railway closes idle WS after ~60s without traffic
+    pingTimeout: 60000,
     pingInterval: 25000,
-    // Use websocket first, polling as fallback
+    // Try WebSocket first, fall back to polling
     transports: ['websocket', 'polling'],
+    // Allow large signal payloads (some WebRTC offers can be big)
+    maxHttpBufferSize: 1e7,
   })
 
   // ─── Socket Events ──────────────────────────────────────────────────────────
@@ -247,15 +248,24 @@ app.prepare().then(() => {
     })
   })
 
-  // ─── Periodic Stats Log (dev only) ─────────────────────────────────────────
-  if (dev) {
-    setInterval(() => {
+  // ─── Periodic Stats Broadcast ─────────────────────────────────────────────
+  // Broadcasts online count every 30s — keeps connections warm on Railway
+  // and gives all clients a live user count update without them asking.
+  setInterval(() => {
+    const waitingCount = queues.video.length + queues.text.length
+    io.emit('stats', {
+      online: io.engine.clientsCount,
+      waiting: waitingCount,
+      chatting: rooms.size * 2,
+      rooms: rooms.size,
+    })
+    if (dev) {
       console.log(
         `[stats] online=${io.engine.clientsCount} | rooms=${rooms.size} | ` +
         `queue_video=${queues.video.length} | queue_text=${queues.text.length}`
       )
-    }, 30_000)
-  }
+    }
+  }, 30_000)
 
   // ─── Start ─────────────────────────────────────────────────────────────────
   httpServer.listen(port, () => {
